@@ -35,8 +35,7 @@ names(epsoc4) <- tolower(gsub("_", ".", names(epsoc4)))
 ```{r funciones}
 kable_estilo <- function(tabla){
   tabla %>% 
-    kableExtra::kable_styling(bootstrap_options = 
-                                     c("striped", "hover", "condensed"),
+    kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
                               full_width=F)
 }
 ```
@@ -123,7 +122,8 @@ knitr::kable(cbind(epsoc4$folio[epsoc4$duracion.t.min < 20],
                 (round(epsoc4$duracion.t.min[epsoc4$duracion.t.min < 20],1))), 
              col.names = c("Folio", "Duración (minutos)"),
              caption = "Entrevistas de menos de 20 minutos") %>% 
-        kable_estilo() %>% 
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                      full_width=F) %>% 
         column_spec(1, width = "10em") %>% 
         column_spec(2, width = "10em")
 ```
@@ -135,7 +135,8 @@ knitr::kable(cbind(epsoc4$folio[epsoc4$duracion.t.min > 150],
                 (round(epsoc4$duracion.t.min[epsoc4$duracion.t.min > 150]/60,1))), 
              col.names = c("Folio", "Duración (horas)"),
              caption = "Entrevistas de más de 150 minutos") %>% 
-        kable_estilo() %>% 
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                      full_width=F) %>% 
         column_spec(1, width = "10em") %>% 
         column_spec(2, width = "10em")
 ```
@@ -252,7 +253,8 @@ kable(epsoc4 %>%
       digits = 1,
       col.names = c("Folio", "Duración viñetas", "Encuestador", "Total encuestas", "% cortas"),
              caption = "Ejercicio viñetas de menos de 10 minutos") %>% 
-        kable_estilo() #%>% 
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                      full_width=F) #%>% 
         #column_spec(1, width = "10em") %>% 
         #column_spec(2, width = "10em") %>% 
         #column_spec(3, width = "10em")
@@ -282,7 +284,8 @@ v <- validator(j := var_group(i.6.a1, i.8.a1, i.9.a1,  i.10.a1, i.11.a1, i.12.a1
 cf2 <- confront(epsoc4, v)
 s.cf2 <- summary(cf2)
 knitr::kable(s.cf2) %>% 
-        kable_estilo()
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                      full_width=F)
 ```
 
 Existen `r length(s.cf2$fails[s.cf2$fails > 0])` variables de actitudes sobre justicia fuera de rango.
@@ -303,7 +306,8 @@ cf <- check_that(epsoc4, edad.seleccionado <= 59 & edad.seleccionado >= 18,
                  sexo.enc == sexo.seleccionado)
 s.cf <- summary(cf)
 knitr::kable(s.cf) %>% 
-        kable_estilo()
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                      full_width=F)
 ```
 
 
@@ -327,7 +331,8 @@ edad <- tibble(Folio = epsoc4$folio[is.na(epsoc4$enc.edad)],
 knitr::kable(edad,
              caption = "Casos sin fecha de nacimiento en `enc_edad`",
              col.names = c("Folio", "Fecha nacimiento", "Edad")) %>% 
-        kable_estilo()
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                      full_width=F)
 ```
 
 ```{r sexo}
@@ -336,7 +341,8 @@ knitr::kable(cbind(epsoc4$folio[epsoc4$sexo.enc != epsoc4$sexo.seleccionado],
                 epsoc4$sexo.seleccionado[epsoc4$sexo.enc != epsoc4$sexo.seleccionado]), 
              col.names = c("Folio", "sexo.enc", "sexo.seleccionado"),
              caption = "Entrevistas donde sexo encuestado y seleccionado no coinciden") %>% 
-        kable_estilo()
+        kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
+                      full_width=F)
 
 ```
 
