@@ -1,6 +1,6 @@
 ---
 title: "Validación EPSOC"
-author: "Cristóbal Moya"
+author: "Equipo EPSOC"
 date: "`r format(Sys.time(), '%d %B, %Y')`"
 output: 
   html_document:
@@ -18,25 +18,33 @@ Este documento consiste en una revisión del proceso de validación de EPSOC 201
 
 Se cargan los datos en el formato entregado y se homogeneiza el formato en minúscula y usando puntos ("`.`") para separar en vez de guiones bajos ("`_`").
 
-```{r cargar}
-pacman::p_load(tidyverse, lubridate, haven, anytime,
-               sjlabelled, sjmisc,
-               chron, validate, eeptools, kableExtra, janitor, here,
+```{r setup}
+pacman::p_load(tidyverse, lubridate, anytime, chron,
+               haven, sf,
+               sjlabelled, sjmisc, 
+               validate, eeptools, kableExtra, janitor, here, naniar,
                captioner)
-path <- "C:/Users/CM/Dropbox/2016 - Mecanismos de legitimación de la desigualdad/EPSOC/datos/"
 
-epsoc4 <-haven::read_spss(paste0(path, '181115 - EPSOC Base parcial 4.sav')) %>% 
+if(Sys.info()[["user"]] == 'caayala'){
+  path <- "/Users/caayala/Dropbox (DESUC)/DESUC/Proyectos/3 Políticas Públicas/EPSOC 2018/BD/"
+} else if(Sys.info()[["user"]] == 'Andres') {
+  path <- "/Users/Andres/Dropbox (DESUC)/Proyectos/3 Políticas Públicas/EPSOC 2018/BD/"
+}
+
+epsoc <-haven::read_spss(paste0(path, '190124 - EPSOC Base parcial 14.sav')) %>% 
   clean_names() %>% 
-  mutate(region = folio %/% 100000)
+  mutate(region = folio %/% 100000,
+         i_1_orden = as.integer(i_1_orden))
 
-names(epsoc4) <- tolower(gsub("_", ".", names(epsoc4)))
+names(epsoc) <- tolower(gsub("_", ".", names(epsoc)))
+
+grabacion <- FALSE
 ```
 
 ```{r funciones}
 kable_estilo <- function(tabla){
   tabla %>% 
-    kableExtra::kable_styling(bootstrap_options = 
-                                     c("striped", "hover", "condensed"),
+    kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed"),
                               full_width=F)
 }
 ```
@@ -48,25 +56,59 @@ makeVlist <- function(dta) {
                label = labels)
         
 }  ## Etiquetas variables
-labs.epsoc4 <- makeVlist(epsoc4)
-labs.epsoc4 <- labs.epsoc4 %>% 
+labs.epsoc <- makeVlist(epsoc)
+labs.epsoc <- labs.epsoc %>% 
   mutate(label2 = map_chr(label, toString))
 
-labs.epsoc <- get_label(epsoc4)
+labs.epsoc <- get_label(epsoc)
 ```
 
 # General
 
-La actual base cuenta con `r dim(epsoc4)[1]` casos recogidos entre el `r min(as.Date(epsoc4$date))` y el `r max(as.Date(epsoc4$date))`. 
+La actual base cuenta con `r dim(epsoc)[1]` casos recogidos entre el `r min(as.Date(epsoc$date))` y el `r max(as.Date(epsoc$date))`. 
 
 ```{r entrev_regiones}
-epsoc4 %>% 
+epsoc %>% 
   count(region, status) %>% 
   spread(status, n) %>% 
   janitor::adorn_totals(where = c('row', 'col')) %>% 
   kable() %>% 
   kable_estilo()
 ```
+
+## Distribución encuestado
+
+```{r}
+epsoc <- epsoc %>% 
+  mutate(rango_edad = rec(edad.seleccionado,
+                          rec = "1:17 =  1[menor de 18 años];
+                                 18:24 = 2[18 a 24 años]; 
+                                 25:44 = 3[25 a 44 años];
+                                 45:59 = 4[45 a 59 años]"))
+
+frq(epsoc, rango_edad)
+```
+
+```{r}
+epsoc %>% 
+  filter(is.na(rango_edad)) %>%
+  select(sexo.seleccionado, edad.seleccionado, situacion.laboral.seleccionado)
+```
+
+Probablemente discrepancia de edad para las personas mayores de 59 años se debe a una confusión entre edad reportada o fecha de cumpleaños. Quedarán asignados al grupo de edad `rango_edad == 4`.
+
+```{r}
+epsoc <- epsoc %>% 
+  mutate(rango_edad = replace(rango_edad, edad.seleccionado %in% c(60, 61), 4))
+
+epsoc %>% 
+  count(sexo.seleccionado, rango_edad, situacion.laboral.seleccionado) %>% 
+  mutate_all(as_label) %>% 
+  mutate(prop = round(n/sum(n), 4)) %>% 
+  kable() %>% 
+  kable_estilo()
+```
+
 
 
 ## Duración entrevistas
@@ -80,85 +122,158 @@ homologar_fechas <- function(fecha){
     anytime::anytime()
 }
 
-epsoc <- epsoc4 %>% 
+epsoc <- epsoc %>% 
   mutate_at(vars(starts_with('time')), homologar_fechas)
 ```
 
 
 ```{r duracion, warning=F}
+epsoc <- epsoc %>% 
+  mutate(duration = str_replace_all(duration, c('-' = '', '^(\\d{2})' = '0\\.\\1'))) %>% 
+  separate(duration, into = c('dura.d', 'duracion'), sep = '\\.', convert = TRUE, remove = FALSE) %>% 
+  mutate(duracion.t = as.duration(hms(duracion) + hms(hms::hms(hour = (24 * dura.d)))))
 
-epsoc <- epsoc4 %>% 
-        mutate(duration = str_replace_all(duration, c('-' = '', '^(\\d{2})' = '0\\.\\1'))) %>% 
-        separate(duration, into = c('dura.d', 'duracion'), sep = '\\.', convert = TRUE, remove = FALSE) %>% 
-        mutate(duracion.t = as.duration(hms(duracion) +  hms(hms::hms(hour = (24 *         dura.d)))))
+epsoc$duracion.t.min <- epsoc$duracion.t@.Data/60
 
-epsoc4$dura.d <- ifelse(nchar(epsoc4$duration) == 8,
-                 0, 
-                 as.numeric(gsub("\\..*$", "", epsoc4$duration)))
-
-epsoc4$duracion <- hms(gsub("^.*\\.", "", epsoc4$duration))
-epsoc4$duracion.t <- as.duration(epsoc4$duracion + 
-                                         as.numeric(days(epsoc4$dura.d)))
-
-epsoc4$duracion.t.min <- epsoc4$duracion.t@.Data/60
-
-epsoc4 %>% 
-        ggplot(aes(x = duracion.t.min)) + 
-        geom_histogram(binwidth = 5) +
-        theme_bw() +
-        ggtitle("Distribución duración entrevistas por región (escala truncada < 150 minutos)") +
-        labs(x = "Duración total entrevista (minutos)",
-             y = "Frecuencia") +
-        coord_cartesian(xlim = 0:150) +
-        scale_x_continuous(breaks = seq(0,150,by = 15)) +
-        facet_grid(as_factor(region) ~ .)
-
+epsoc %>% 
+  ggplot(aes(x = duracion.t.min)) + 
+  geom_histogram(binwidth = 5) +
+  theme_bw() +
+  ggtitle("Distribución duración entrevistas por región (escala truncada < 150 minutos)") +
+  labs(x = "Duración total entrevista (minutos)",
+       y = "Frecuencia") +
+  coord_cartesian(xlim = 0:150) +
+  scale_x_continuous(breaks = seq(0, 150, by = 15)) +
+  facet_grid(as_factor(region) ~ .)
 ```
 
-Existen `r length(epsoc4$folio[epsoc4$duracion.t.min < 20])` entrevistas que duran menos de 20 minutos, estas debieran ser supervisadas.
-
+Existen `r length(epsoc$folio[epsoc$duracion.t.min < 20])` entrevistas que duran menos de 20 minutos, estas debieran ser supervisadas.
 
 ```{r}
-knitr::kable(cbind(epsoc4$folio[epsoc4$duracion.t.min < 20],
-                (round(epsoc4$duracion.t.min[epsoc4$duracion.t.min < 20],1))), 
-             col.names = c("Folio", "Duración (minutos)"),
-             caption = "Entrevistas de menos de 20 minutos") %>% 
-        kable_estilo() %>% 
-        column_spec(1, width = "10em") %>% 
-        column_spec(2, width = "10em")
+epsoc %>%
+  filter(as.double(duracion.t.min) < 20) %>%
+  select(folio, duracion.t.min) %>% 
+  knitr::kable(col.names = c("Folio", "Duración (minutos)"),
+               caption = "Entrevistas de menos de 20 minutos",
+               digits = 1) %>% 
+  kable_estilo() %>% 
+  column_spec(1, width = "10em") %>% 
+  column_spec(2, width = "10em")
 ```
 
-Existen `r length(epsoc4$folio[epsoc4$duracion.t.min > 150])` entrevistas que duran más de 150 minutos, estas debieran ser supervisadas.
+Existen `r length(epsoc$folio[epsoc$duracion.t.min > 150])` entrevistas que duran más de 150 minutos, estas debieran ser supervisadas.
 
 ```{r ent.largas}
-knitr::kable(cbind(epsoc4$folio[epsoc4$duracion.t.min > 150],
-                (round(epsoc4$duracion.t.min[epsoc4$duracion.t.min > 150]/60,1))), 
-             col.names = c("Folio", "Duración (horas)"),
-             caption = "Entrevistas de más de 150 minutos") %>% 
-        kable_estilo() %>% 
-        column_spec(1, width = "10em") %>% 
-        column_spec(2, width = "10em")
+epsoc %>%
+  filter(as.double(duracion.t.min) > 150) %>%
+  transmute(folio, duracion.t.min / 60) %>% 
+  knitr::kable(col.names = c("Folio", "Duración (horas)"),
+               caption = "Entrevistas de más de 150 minutos",
+               digits = 1) %>% 
+  kable_estilo() %>% 
+  column_spec(1, width = "10em") %>% 
+  column_spec(2, width = "10em")
 ```
+
+## Producción por día
+
+Cantidad de encuestas realizadas por día.
+
+```{r}
+## Comienzo encuesta
+epsoc$time1.hms <- hms::as.hms(epsoc$time1)
+epsoc$time1.wday <- lubridate::wday(epsoc$time1)
+epsoc$time1.dmy <- date(epsoc$time1)
+
+epsoc %>% 
+  count(time1.dmy) %>% 
+  mutate(n_mean = mean(n)) %>%  
+  ggplot(aes(x = time1.dmy, y = n)) +
+  geom_line() +
+  geom_smooth() +
+  geom_hline(aes(yintercept = n_mean), colour = 'green') +
+  geom_label(aes(x = min(time1.dmy)[[1]], y = n_mean[[1]], label = round(n_mean, 1))) +
+  labs(title = 'Número de encuestas por día') +
+  scale_x_date(breaks = '2 weeks')
+```
+
+```{r}
+epsoc %>% 
+  count(time1.wday) %>% 
+  mutate(n_mean = mean(n)) %>%  
+  ggplot(aes(x = time1.wday, y = n)) +
+  geom_line() +
+  geom_smooth() +
+  geom_hline(aes(yintercept = n_mean), colour = 'green') +
+  geom_label(aes(x = min(time1.wday)[[1]], y = n_mean[[1]], label = round(n_mean, 1))) +
+  labs(title = 'Número de encuestas por día de la semana') +
+  scale_x_continuous(breaks = seq(7))
+```
+
 
 ## Georeferrenciación
 
-`r ifelse(sum(is.na(epsoc4$latitude)) == 0, "No existen entrevistas sin datos de georreferenciación", paste("Existen", sum(is.na(epsoc4$latitude))))` entrevistas sin datos de georreferenciación:
+`r ifelse(sum(is.na(epsoc$latitude)) == 0, "No existen entrevistas sin datos de georreferenciación", paste("Existen", sum(is.na(epsoc$latitude))))` entrevistas sin datos de georreferenciación:
 
 ```{r}
-kable(epsoc4 %>% 
-        select(folio, latitude, srvyr) %>% 
-        group_by(srvyr) %>% 
-        mutate(n.enc = length(folio)) %>% 
-        filter(is.na(latitude)) %>%
-        select(folio, srvyr, n.enc) %>% 
-        mutate(n.enc.sg = (length(folio)/n.enc)*100) %>%       
-        arrange(srvyr),
-      digits = 1, 
-      col.names = c("Folio", "Encuestador", "Total encuestas", "% sin georef.")) %>% 
-      kable_estilo()
+epsoc %>% 
+  select(folio, latitude, srvyr) %>% 
+  group_by(srvyr) %>% 
+  mutate(n.enc = length(folio)) %>% 
+  filter(is.na(latitude)) %>%
+  select(folio, srvyr, n.enc) %>% 
+  mutate(n.enc.sg = (length(folio)/n.enc)*100) %>%       
+  arrange(srvyr, folio) %>% 
+  group_by_at(vars(-folio)) %>% 
+  nest() %>% 
+  mutate(Folio = map_chr(data, ~ flatten(.) %>% str_c(., collapse = ', '))) %>% 
+  select(-data) %>% 
+  kable(digits = 1, 
+        col.names = c("Encuestador", "Total encuestas", "% sin georef.", "folios")) %>% 
+  kable_estilo()
 ```
 
+## Puntos de encuestas
 
+```{r}
+epsoc_geo <- epsoc %>% 
+  select(folio, sbj.num, region, srvyr, longitude, latitude) %>% 
+  filter(!is.na(latitude)) %>% 
+  sf::st_as_sf(coords = c('longitude', 'latitude'),
+               crs = "+proj=longlat +ellps=GRS80")
+
+sf::write_sf(epsoc_geo,
+             here::here('validacion_epsoc_puntos_respuesta.kml'),
+             dataset_options=c("NameField=folio"),
+             delete_dsn=TRUE)
+```
+
+### Antofagasta
+
+```{r}
+epsoc_geo %>% 
+  filter(region == 2) %>% 
+  ggplot(aes(color = srvyr)) +
+  geom_sf() 
+```
+
+### Temuco
+
+```{r}
+epsoc_geo %>% 
+  filter(region == 9) %>% 
+  ggplot(aes(color = srvyr)) +
+  geom_sf()
+```
+
+### Santiago
+
+```{r}
+epsoc_geo %>% 
+  filter(region == 13) %>% 
+  ggplot(aes(color = srvyr)) +
+  geom_sf()
+```
 
 # Experimentos
 
@@ -172,77 +287,96 @@ Para validar el proceso con las viñetas necesitamos:
 - La base de datos que asocia los folios con sets de viñeta en orden presentado
 - Acceso a grabaciones de voz durante el proceso de entrevista para asegurarnos que están bien asociadas las escalas con las variables
 
+### Distribución de viñetas
+
+Revisar la distribución efectiva captada de los decks de viñetas en terreno hasta el momento.
+
+```{r}
+epsoc %>% 
+  select(folio, i.1.grupo) %>% 
+  head()
+```
+
+
+```{r}
+epsoc %>% 
+  transmute(i.1.grupo = as.integer(i.1.grupo),
+            region) %>% 
+  group_by_all() %>% 
+  count() %>% 
+  group_by(region) %>% 
+  mutate(n_mean = mean(n)) %>% 
+  ggplot(aes(x = as_factor(i.1.grupo), y = n)) +
+  geom_col() +
+  geom_hline(aes(group = region, yintercept = n_mean), colour = 'green') + 
+  geom_text(aes(label = ..y..), nudge_y = 1, size = 3) +
+  facet_grid(rows = vars(region)) +
+  labs(title = 'Distribución de viñetas')
+```
+
 ### Duración ejercicio
 
 - Los marcadores de tiempo `time2` y `time3` no siguen un formato homogéneo para registrar la hora. Por ejemplo, en algún caso se utiliza el formato "2018-10-27T19:05:08-03:00" y en otros "Fri Oct 19 13:01:59 -0300 2018"
 - Homogeneizar formatos de tiempos y fechas a ISO8601
 
 
-```{r dura.vineta, warning=F}
+```{r comienzo viñeta, warning=F}
 ## Comienzo viñetas
-epsoc4$time2 <- ifelse(nchar(epsoc4$time2) == 30, 
-                      as.character(strptime(epsoc4$time2,
-                              format = "%a %b %d %H:%M:%S %z %Y")), 
-                      as.character(ymd_hms(epsoc4$time2)-hours(3)))
-epsoc4$time2 <- as_datetime(epsoc4$time2)
-epsoc4$time2.hms <- format(epsoc4$time2, format = "%H:%M:%S")
-epsoc4$time2.hms <- as.POSIXct(epsoc4$time2.hms, format = "%H:%M:%S")
-epsoc4$time2.dmy <- dmy(format(epsoc4$time2, format = "%d-%m-%y"))
+epsoc$time2.hms <- hms::as.hms(epsoc$time2)
+epsoc$time2.dmy <- date(epsoc$time2)
 
 ## Fin viñetas
-epsoc4$time3 <- ifelse(nchar(epsoc4$time3) == 30, 
-                      as.character(strptime(epsoc4$time3,
-                                            format = "%a %b %d %H:%M:%S %z %Y")), 
-                      as.character(ymd_hms(epsoc4$time3)-hours(3)))
-epsoc4$time3 <- as_datetime(epsoc4$time3)
-epsoc4$time3.hms <- format(epsoc4$time3, format = "%H:%M:%S")
-epsoc4$time3.hms <- as.POSIXct(epsoc4$time3.hms, format = "%H:%M:%S")
-epsoc4$time3.dmy <- dmy(format(epsoc4$time3, format = "%d-%m-%y"))
+epsoc$time3.hms <- hms::as.hms(epsoc$time3)
+epsoc$time3.dmy <- date(epsoc$time3)
 
-epsoc4$dura.vinetas <- difftime(epsoc4$time3, epsoc4$time2,
+epsoc$dura.vinetas <- difftime(epsoc$time3, epsoc$time2,
                                units = "mins")
-ggplot(epsoc4, aes(x = time2.dmy, y = time2.hms)) + geom_point() +
-        labs(x = "Día", y = "Hora") + 
-        ggtitle("Día y hora comienzo actividad viñetas") + 
-        theme_bw()
 
-ggplot(epsoc4, aes(x = srvyr, y = time2.hms)) + 
+ggplot(epsoc, aes(x = time2.dmy, y = time2.hms)) + 
+  geom_point() +
+  labs(x = "Día", y = "Hora") + 
+  ggtitle("Día y hora comienzo actividad viñetas") + 
+  theme_bw()
+```
+
+```{r comienzo encuestador, warning=F}
+ggplot(epsoc, aes(x = srvyr, y = time2.hms)) + 
   geom_point() +
   labs(x = "Encuestador", y = "Hora") + 
   ggtitle("Hora comienzo actividad viñetas según encuestador") + 
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90))
-
+  theme(axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1))
 ```
-
-
 ```{r plot.dura, message = F}
-epsoc4 %>% 
-        mutate(vin.cort = ifelse(dura.vinetas < 5, "< 5'", ">= 5'")) %>% 
-        ggplot(aes(dura.vinetas)) + 
-                geom_histogram(aes(fill = vin.cort)) + theme_bw() +
-                theme(legend.title=element_blank()) +
-                ggtitle("Duración ejercicio viñetas") +
-                xlab("Minutos")
+epsoc %>% 
+  mutate(vin.cort = ifelse(dura.vinetas < 5, "< 5'", ">= 5'")) %>% 
+  ggplot(aes(dura.vinetas)) + 
+  geom_histogram(aes(fill = vin.cort)) + theme_bw() +
+  theme(legend.title=element_blank()) +
+  ggtitle("Duración ejercicio viñetas") +
+  xlab("Minutos")
 ```
 
 Como se puede ver en la figura anterior, la distribución del tiempo de duración del ejercicio de viñetas es variable. En términos de validación, llama la atención que se logre realizar el ejercicio en menos de cinco minutos. Estos casos deberían ser revisados apenas sea posible.
 
 
 ```{r plot.dura.enc}
-ggplot(epsoc4, aes(x = srvyr, y = dura.vinetas)) + 
-  geom_point() +
+ggplot(epsoc, aes(x = srvyr, y = dura.vinetas, 
+                  colour = status)) + 
+  geom_point(alpha = 0.5,
+             position = position_jitter(width = .2)) +
+  scale_color_manual(values = c('green', 'orange', 'blue')) + 
+  facet_grid(cols = vars(region), scales = 'free_x', space = 'free_x') +
   labs(x = "Encuestador", y = "minutos") + 
-  ggtitle("Duración de actividad viñetas según encuestador") + 
+  ggtitle("Duración de actividad viñetas según encuestador según región") + 
   theme_minimal() +
-  theme(axis.text.x = element_text(angle = 90))
+  theme(axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1))
 ```
 
 En particular, deben supervisarse las siguientes entrevistas donde el ejercicio duró menos de 10 minutos:
 
 ```{r}
-
-kable(epsoc4 %>% 
+kable(epsoc %>% 
         group_by(srvyr) %>% 
         mutate(n.enc = length(folio)) %>% 
         select(folio, dura.vinetas, srvyr, n.enc) %>% 
@@ -251,38 +385,240 @@ kable(epsoc4 %>%
         arrange(srvyr, dura.vinetas), 
       digits = 1,
       col.names = c("Folio", "Duración viñetas", "Encuestador", "Total encuestas", "% cortas"),
-             caption = "Ejercicio viñetas de menos de 10 minutos") %>% 
-        kable_estilo() #%>% 
-        #column_spec(1, width = "10em") %>% 
-        #column_spec(2, width = "10em") %>% 
-        #column_spec(3, width = "10em")
+      caption = "Ejercicio viñetas de menos de 10 minutos") %>% 
+  kable_estilo() #%>% 
+#column_spec(1, width = "10em") %>% 
+#column_spec(2, width = "10em") %>% 
+#column_spec(3, width = "10em")
+```
+
+### Reconstrucción de variables de outcome
+
+```{r}
+labels_correcion <- function(.vect) {
+  replace(.vect, .vect == 6, -1) %>% 
+    remove_labels(labels = '- 1') %>% 
+    add_labels(labels = c('- 1' = -1))
+}
+```
+
+#### Ideología para ego y alter
+
+```{r}
+ideologia_ego <- list(orden1 = c("c0.1", "c1.1.1", "c1.2.1", "c1.3.1", "c1.4.1", "c2.1.1", "c2.2.1", "c2.3.1", "c2.4.1"),
+                      orden2 = c("c0.2", "c1.4.2", "c1.1.2", "c1.2.2", "c1.3.2", "c2.4.2", "c2.1.2", "c2.2.2", "c2.3.2"),
+                      orden3 = c("c0.3", "c1.3.3", "c1.4.3", "c1.1.3", "c1.2.3", "c2.3.3", "c2.4.3", "c2.1.3", "c2.2.3"), 
+                      orden4 = c("c0.4", "c1.2.4", "c1.3.4", "c1.4.4", "c1.1.4", "c2.2.4", "c2.3.4", "c2.4.4", "c2.1.4"))
+
+df_ideologia_ego <- epsoc %>% 
+  select(folio, i.1.orden, !!!flatten_chr(ideologia_ego)) %>% 
+  nest(-i.1.orden) %>% 
+  arrange(i.1.orden)
+
+df_ideologia_ego <- df_ideologia_ego %>% 
+  mutate(orden = ideologia_ego[str_glue("orden{i.1.orden + 1}")],
+         data = map2(data, orden, ~select(.x, one_of("folio", .y))),
+         data_var = map(data, names) %>% map_chr(str_c, collapse = ', '))
+
+df_ideologia_ego
+```
+```{r}
+map_dfc(df_ideologia_ego$data, get_label) %>% 
+  mutate_all(str_trunc, width = 25)
 ```
 
 
+```{r}
+suppressWarnings(
+  df_ideologia_ego <- df_ideologia_ego %>% 
+    mutate(data = map(data, ~rename_all(.x, ~c("folio", str_remove(ideologia_ego$orden1,'.\\d{1,2}$'))))) %>% 
+    select(data) %>% 
+    unnest()
+)
 
-## Evaluación de justicia
+df_ideologia_ego <- copy_labels(df_new = df_ideologia_ego,
+                                df_origin = epsoc %>% 
+                                  select(one_of(c('folio', ideologia_ego$orden1))) %>% 
+                                  rename_all(~c("folio", str_remove(ideologia_ego$orden1,'.\\d{1,2}$'))))
+```
+
+Agregar variables reconstruidas a base de datos.
+
+```{r}
+epsoc <- left_join(epsoc, 
+                   df_ideologia_ego,
+                   by = 'folio')
+
+gg_ideologia_orden <- function(.data, var_orden, miss = 88){
+  var_orden_quo <- enquo(var_orden)
+  
+  .data %>% 
+    gather('variable', 'valor', -!!var_orden_quo) %>% 
+    filter(valor < miss) %>%
+    ggplot(aes(x = valor)) +
+    geom_bar() +
+    facet_grid(rows = vars(variable),
+               cols = vars(!!var_orden_quo))
+}
+
+epsoc %>% 
+  select(i.1.orden, matches("c1.\\d{1}$")) %>% 
+  gg_ideologia_orden(i.1.orden) +
+  labs(title = 'Distribución de viñetas ego y alter, según orden de preguntas')
+```
+
+#### Ideología para viñetas
+
+Primero es necesario reunir las variables
+
+```{r}
+ideologia_vin <- list(orden1 = c(1, 2, 3, 4),
+                      orden2 = c(4, 1, 2, 3),
+                      orden3 = c(3, 4, 1, 2), 
+                      orden4 = c(2, 3, 4, 1))
+
+df_ideologia_vin <- epsoc %>% 
+  select(folio, i.1.orden, matches("^c([3-9]|10)\\.[1-4].*")) %>% 
+  nest(-i.1.orden) %>% 
+  arrange(i.1.orden)
+
+ideologia_variables <- function(persona, orden, grupo){
+  expand.grid(persona, orden, grupo) %>% 
+  arrange(Var1) %>% 
+  str_glue_data("c{Var1}.{Var2}.{Var3}")
+}
+
+df_ideologia_vin <- df_ideologia_vin %>% 
+  mutate(orden = ideologia_vin[str_glue("orden{i.1.orden + 1}")],
+         variables = map2(orden, i.1.orden + 1, ~ideologia_variables(3:10, .x, .y)),
+         data = map2(data, variables, ~select(.x, one_of("folio", .y))),
+         data_var = map(data, names) %>% map_chr(str_c, collapse = ', '))
+
+df_ideologia_vin %>% 
+  select(i.1.orden, data_var)
+```
+
+```{r}
+etiquetas <- map(df_ideologia_vin$data, get_labels)
+```
+
+```{r}
+ideologia_vin1_names <- names(df_ideologia_vin$data[[1]])
+ideologia_vin1_gen_names <- str_remove(ideologia_vin1_names, '.\\d{1,2}$')
+
+suppressWarnings(
+  df_ideologia_vin <- df_ideologia_vin %>% 
+    mutate(data = map(data, ~rename_all(.x, ~ideologia_vin1_gen_names))) %>% 
+    select(data) %>% 
+    unnest()
+)
+
+df_ideologia_vin <- copy_labels(df_new = df_ideologia_vin,
+                                df_origin = epsoc %>% 
+                                  select(!!!ideologia_vin1_names) %>% 
+                                  rename_all(~ideologia_vin1_gen_names))
+
+head(df_ideologia_vin)
+```
+
+Agregar variables reconstruidas a base de datos.
+
+```{r}
+epsoc <- left_join(epsoc, 
+                   df_ideologia_vin,
+                   by = 'folio')
+```
+
+Gráficos para comparar distribuciones entre viñetas y orden
+
+```{r}
+epsoc %>% 
+  select(i.1.orden, matches('c([3-9]|10).1$')) %>% 
+  gg_ideologia_orden(i.1.orden) +
+  labs(title = 'Distribución de viñetas Familias, según orden de preguntas')
+```
+
+```{r}
+epsoc %>% 
+  select(i.1.orden, matches('c([3-9]|10).2$')) %>% 
+  gg_ideologia_orden(i.1.orden) +
+  labs(title = 'Distribución de viñetas Orden o Cambio, según orden de preguntas')
+```
+
+```{r}
+epsoc %>% 
+  select(i.1.orden, matches('c([3-9]|10).3$')) %>% 
+  gg_ideologia_orden(i.1.orden) +
+  labs(title = 'Distribución de viñetas Educación, según orden de preguntas')
+```
+
+```{r}
+epsoc %>% 
+  select(i.1.orden, matches('c([3-9]|10).4$')) %>% 
+  gg_ideologia_orden(i.1.orden) +
+  labs(title = 'Distribución de viñetas Grandes Empresas, según orden de preguntas')
+```
+
+## Recompensa justa
 
 Para validar el experimento de evaluación de justicia necesitamos:
 - Una breve explicación de cómo están codificados los items de recompensa percibida y recompensa justa para un obrero, el presidente de una empresa y el respondente
 - Es fundamental saber cuál es la variable que define el orden en que se presentó una y otra pregunta
 
-# Items justicia
+### Distribución de tratamientos
+
+La variable a que determina el tratamiento mostrado en la encuesta es la variable `num.grupo.jd`.
+
+```{r}
+flat_table(epsoc, num.grupo.jd, region, margin = 'col')
+```
+
+### Variables asociadas
+
+Existen 24 variables asociadas al experimiento de *recompensa justa* que se detallan a continuación:
+
+```{r}
+var_rec_justa <- find_var(epsoc, pattern = stringr::regex('obrero|pdte'), search = 'label')
+
+var_rec_justa$var.label %>% 
+  str_replace_all(c('Quisiéramos saber cuánto dinero cree Ud. que ganan las personas al mes en estos trabajos u ocupaciones que se mencionan más adelante, después de considerar los descuentos de salud, previsión u otros impuestos' = 'cuánto dinero cree Ud. que ganan',
+                    'Pensando en lo que Ud. cree que las personas en estos trabajos deberían ganar al mes, después de los descuentos de salud, previsión u otros impuestos. ' = '')) %>% 
+   paste0(var_rec_justa$var.name, " - ", sort(rep(seq(6), 4)), " - ", .)
+```
+
+Al inicio de la aplicación del cuestionario se implementó 4 grupos (del grupo 1 al 4 o variables `i.1.g1a.1.rec` a `i.2.g1a.4.rec`). Como puede verse el grupo 3 es identico al 1 y el grupo 4 es igual al 2 porque se mantuvo el orden de *presidente empresa* y luego *obrero*.
+
+Para solucionarlo, se agregaron los grupos 5 y 6 en donde se se cambia el orden a *obrero* y luego *presidente empresa*. Con esto los 4 grupos (1, 2, 5 y 6) a los que cada persona se verá confrontada serán diferentes. Como se puede ver en el gráfico \ref{fig:esquema_rec_justa}, la implementación del cambio se efectuó correctamente.
+
+```{r esquema_rec_justa}
+epsoc %>% 
+  arrange(num.grupo.jd, time1) %>% 
+  select(one_of(var_rec_justa$var.name)) %>% 
+  naniar::vis_miss() +
+  labs(title = 'Distribución de respuestas en preguntas de recompensa justa') +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5, hjust = 0))
+```
+
+## Items justicia
 
 La encuesta considera una serie de preguntas con escalas predefinidas. A continuación se revisa que los ítems sobre justicia tengan respuestas en el rango de 1 a 5 o bien valores de 8 o 9.
 
 ```{r}
-item.just <- flatten_chr(labs.epsoc4[grep("usto", labs.epsoc4$label2),1])
-v <- validator(j := var_group(i.6.a1, i.8.a1, i.9.a1,  i.10.a1, i.11.a1, i.12.a1,
-                              i.13.a1, i.16.a1, i.1.h1, i.2.h1, i.5.h1, i.7.h1, 
-                              i.8.h1, i.10.h1, i.11.h1, i.12.h1, i.14.h1), 
+item_just <- find_var(epsoc, "usto")
+item_just$var.name
+
+v <- validator(j := var_group(i.6.a1, i.8.a1, i.9.a1, i.10.a1, i.11.a1, i.12.a1, i.13.a1, i.16.a1, 
+                              i.1.h1, i.2.h1, i.5.h1, i.7.h1, i.8.h1, i.10.h1, i.11.h1, i.12.h1, i.14.h1), 
                j >= 1,
                j <= 9,
                j != 6,
                j != 7)
-cf2 <- confront(epsoc4, v)
+
+cf2 <- confront(epsoc, v)
 s.cf2 <- summary(cf2)
+
 knitr::kable(s.cf2) %>% 
-        kable_estilo()
+  kable_estilo()
 ```
 
 Existen `r length(s.cf2$fails[s.cf2$fails > 0])` variables de actitudes sobre justicia fuera de rango.
@@ -298,8 +634,9 @@ Para validar los datos consideramos los siguientes criterios:
 - Las variables con información redundante deben converger (edad y sexo)
 
 ```{r}
-epsoc4$duration <- chron(times=epsoc4$duration)
-cf <- check_that(epsoc4, edad.seleccionado <= 59 & edad.seleccionado >= 18,
+epsoc$duration <- chron(times=epsoc$duration)
+
+cf <- check_that(epsoc, edad.seleccionado <= 59 & edad.seleccionado >= 18,
                  sexo.enc == sexo.seleccionado)
 s.cf <- summary(cf)
 knitr::kable(s.cf) %>% 
@@ -320,23 +657,45 @@ Resultados:
 
 ```{r edad}
 ## Fecha de nacimiento y edad seleccionado
-epsoc4$enc.edad[as.character(epsoc4$enc.edad) == "1582-10-14"] <- NA # comportamiento extraño al importar desde SPSS
-edad <- tibble(Folio = epsoc4$folio[is.na(epsoc4$enc.edad)],
-        Fecha = epsoc4$enc.edad[is.na(epsoc4$enc.edad)],
-        Edad = epsoc4$edad.seleccionado[is.na(epsoc4$enc.edad)]) 
+epsoc$enc.edad[as.character(epsoc$enc.edad) == "1582-10-14"] <- NA # comportamiento extraño al importar desde SPSS
+edad <- tibble(Folio = epsoc$folio[is.na(epsoc$enc.edad)],
+               Fecha = epsoc$enc.edad[is.na(epsoc$enc.edad)],
+               Edad = epsoc$edad.seleccionado[is.na(epsoc$enc.edad)]) 
 knitr::kable(edad,
              caption = "Casos sin fecha de nacimiento en `enc_edad`",
              col.names = c("Folio", "Fecha nacimiento", "Edad")) %>% 
-        kable_estilo()
+  kable_estilo()
 ```
 
 ```{r sexo}
-knitr::kable(cbind(epsoc4$folio[epsoc4$sexo.enc != epsoc4$sexo.seleccionado],
-                epsoc4$sexo.enc[epsoc4$sexo.enc != epsoc4$sexo.seleccionado],
-                epsoc4$sexo.seleccionado[epsoc4$sexo.enc != epsoc4$sexo.seleccionado]), 
-             col.names = c("Folio", "sexo.enc", "sexo.seleccionado"),
-             caption = "Entrevistas donde sexo encuestado y seleccionado no coinciden") %>% 
-        kable_estilo()
-
+epsoc %>% 
+  filter(sexo.enc != sexo.seleccionado) %>% 
+  select(Folio = folio, sexo.enc, sexo.seleccionado) %>% 
+  knitr::kable(col.names = c("Folio", "sexo.enc", "sexo.seleccionado"),
+               caption = "Entrevistas donde sexo encuestado y seleccionado no coinciden") %>% 
+  kable_estilo()
 ```
 
+# Grabaciones
+
+Grabar base de datos con variables de viñetas reconstruidas.
+
+```{r}
+epsoc %>% 
+  mutate_if(is.numeric, as_labelled) %>% 
+  haven::write_sav("../EPSOC Base parcial con vinetas.sav")
+```
+
+Obtención de archivos de grabaciones de cada encuesta.
+
+```{r, eval=Sys.info()[["user"]] %in% c('caayala', 'Andres')&grabacion}
+ path_general <- '../SurveyToGo Attachments/EPSOC 2018/'
+
+ archivos <- dir(path = path_general, 
+     pattern = str_c(epsoc$sbj.num, collapse = '|'),
+     recursive = TRUE)
+ 
+ file.copy(from = str_c(path_general, archivos), 
+           to = "grabaciones/",
+           overwrite = TRUE)
+```
