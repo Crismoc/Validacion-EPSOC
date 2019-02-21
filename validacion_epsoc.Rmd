@@ -29,9 +29,17 @@ if(Sys.info()[["user"]] == 'caayala'){
   path <- "/Users/caayala/Dropbox (DESUC)/DESUC/Proyectos/3 Políticas Públicas/EPSOC 2018/BD/"
 } else if(Sys.info()[["user"]] == 'Andres') {
   path <- "/Users/Andres/Dropbox (DESUC)/Proyectos/3 Políticas Públicas/EPSOC 2018/BD/"
+} else if(Sys.info()[["user"]] == 'CM') {
+  path <- "C:/Users/CM/Dropbox/2016 - Mecanismos de legitimación de la desigualdad/EPSOC/datos/"    
 }
 
-epsoc <-haven::read_spss(paste0(path, '190124 - EPSOC Base parcial 14.sav')) %>% 
+data_files <- list.files(path)
+data_files <- data_files[grep("^[0-9]{6}", data_files)]
+newest <- gsub(" .*$", "", data_files)
+newest <- lubridate::ymd(newest)
+newest <- data_files[which(newest == max(newest))]
+
+epsoc <-haven::read_spss(paste0(path, newest)) %>% 
   clean_names() %>% 
   mutate(region = folio %/% 100000,
          i_1_orden = as.integer(i_1_orden))
@@ -193,8 +201,8 @@ epsoc %>%
   geom_smooth() +
   geom_hline(aes(yintercept = n_mean), colour = 'green') +
   geom_label(aes(x = min(time1.dmy)[[1]], y = n_mean[[1]], label = round(n_mean, 1))) +
-  labs(title = 'Número de encuestas por día') +
-  scale_x_date(breaks = '2 weeks')
+  labs(title = 'Número de encuestas por día') #+
+#  scale_x_date(breaks = '2 weeks')
 ```
 
 ```{r}
